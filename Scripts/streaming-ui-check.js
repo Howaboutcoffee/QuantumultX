@@ -177,25 +177,6 @@ function responseHeader(response, name) {
   return key ? String(headers[key]) : "";
 }
 
-async function testClaude() {
-  const [page, trace] = await Promise.all([
-    request("https://claude.ai/", { headers: { "Accept-Language": "en-US,en;q=0.9" } }),
-    request("https://claude.ai/cdn-cgi/trace").catch(() => null)
-  ]);
-  const finalURL = responseHeader(page, "X-Originating-URL") || page.url || "";
-  const body = page.body || "";
-  if (/app-unavailable-in-region/i.test(finalURL) ||
-      /Claude is not available in (?:your|this) (?:country|region)/i.test(body)) {
-    return "地区受限（服务明确返回）";
-  }
-  requireOK(page);
-  if (!/<title[^>]*>[^<]*Claude/i.test(body) && !/claude.*(?:log in|sign in)/i.test(body)) {
-    return "Claude 页面未识别，无法判断";
-  }
-  const match = trace && trace.statusCode === 200 && String(trace.body).match(/^loc=([A-Z]{2})\s*$/m);
-  return "网页可访问" + regionLabel(match ? match[1] : "") + "（未验证登录或对话）";
-}
-
 async function testGemini() {
   const page = await request("https://gemini.google.com/", { headers: { "Accept-Language": "en-US,en;q=0.9" } });
   const body = page.body || "";
@@ -245,7 +226,7 @@ function displayResult(value) {
 }
 
 function render(rows, selected) {
-  const order = ["ChatGPT", "Claude", "Gemini", "Netflix", "Disney+", "YouTube Premium"];
+  const order = ["ChatGPT", "Gemini", "Netflix", "Disney+", "YouTube Premium"];
   const names = { "Disney+": "Disneyᐩ", "YouTube Premium": "YouTube" };
   const content = [...rows].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
     .map(([name, value]) => "<b>" + escapeHTML(names[name] || name) + ": </b>" +
@@ -259,7 +240,7 @@ function render(rows, selected) {
 
 async function main() {
   const checks = [
-    ["ChatGPT", testChatGPT], ["Claude", testClaude], ["Gemini", testGemini],
+    ["ChatGPT", testChatGPT], ["Gemini", testGemini],
     ["Netflix", testNetflix], ["Disney+", testDisney], ["YouTube Premium", testYouTube]
   ];
   let rows = checks.map(([name]) => [name, "检测未完成，无法判断"]);
