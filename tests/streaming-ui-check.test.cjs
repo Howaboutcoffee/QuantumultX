@@ -15,10 +15,8 @@ function happy(url) {
   if (url.endsWith("/cdn-cgi/trace")) return response("loc=JP\n");
   if (url === "https://chatgpt.com/") return response("<html><title>ChatGPT</title></html>");
   if (url.includes("youtube.com")) return response('YouTube Premium {"GL":"JP"}');
-  if (url.includes("indazn.com")) return response({ GeolocatedCountry: "JP" });
-  if (url.includes("paramountplus.com")) return response("Paramount+");
-  if (url.includes("/token?")) return response({ data: { attributes: { token: "anonymous-test-cookie" } } });
-  if (url.endsWith("/users/me")) return response({ data: { attributes: { currentLocationTerritory: "us" } } });
+  if (url === "https://claude.ai/") return response("<title>Claude</title> Sign in");
+  if (url === "https://gemini.google.com/") return response('<title>Google Gemini</title><script>window.WIZ_global_data={};</script>,2,1,200,"JPN"');
   throw new Error("Unexpected URL: " + url);
 }
 async function run(override = () => undefined, options = {}) {
@@ -43,7 +41,7 @@ async function run(override = () => undefined, options = {}) {
   return { output, html: output.htmlMessage, calls, outputs, logs };
 }
 function line(html, name) {
-  const names = { DAZN: "Dazn", "Disney+": "Disneyᐩ", "Discovery+": "Discoveryᐩ", "Paramount+": "Paramountᐩ" };
+  const names = { "Disney+": "Disneyᐩ", "YouTube Premium": "YouTube" };
   const row = html.split("<br><br>").find(part => part.includes("<b>" + (names[name] || name) + ": </b>")) || "";
   const detail = row.match(/<span title="([^"]*)">/);
   return detail ? detail[1] : row;
@@ -54,11 +52,12 @@ test("normal responses: evidence-specific labels, selected policy, verified TLS,
   assert.match(line(r.html, "Netflix"), /样本可用 2\/2.*JP/);
   assert.match(line(r.html, "Disney+"), /地区检测通过.*JP/);
   assert.match(line(r.html, "ChatGPT"), /网页可访问.*未验证登录或对话/);
-  assert.match(line(r.html, "Discovery+"), /US/);
+  assert.match(line(r.html, "Claude"), /网页可访问.*JP/);
+  assert.match(line(r.html, "Gemini"), /网页可访问.*JP/);
   assert.doesNotMatch(r.html, /完整支持|anonymous-test/);
   assert.deepEqual(r.logs, []);
   assert.ok(r.calls.every(c => c.opts.policy === "Example Proxy" && c.opts["skip-cert-verify"] === false && c.opts["auto-cookie"] === false));
-  assert.equal(r.calls.find(c => c.url.endsWith("/users/me")).headers.Cookie, "st=anonymous-test-cookie");
+  assert.ok(r.calls.every(c => !/indazn|paramountplus|discoveryplus/.test(c.url)));
 });
 for (const [body, code, expected] of [
   ['{"isAvailable":false}', 200, /两个样本均不可用/],
@@ -135,11 +134,6 @@ test("ChatGPT missing trace is unknown region, not blocked", async () => {
   const r = await run(url => url.endsWith("/cdn-cgi/trace") ? response("", 403) : undefined);
   assert.match(line(r.html, "ChatGPT"), /网页可访问.*地区未知/);
 });
-test("Discovery invalid JSON finishes without raw cookie/token output", async () => {
-  const r = await run(url => url.includes("/token?") ? response("invalid JSON") : undefined);
-  assert.match(line(r.html, "Discovery+"), /格式变化/);
-  assert.equal(r.outputs.length, 1);
-});
 test("all transport failures finish once with unknown status", async () => {
   const r = await run(() => Promise.reject({ error: "private endpoint DO-NOT-LOG" }));
   assert.match(r.html, /网络或 TLS 异常/);
@@ -153,8 +147,8 @@ test("a stalled service times out while other results survive", async () => {
   assert.equal(r.outputs.length, 1);
 });
 test("wait for secondary checks before rendering", async () => {
-  const r = await run(url => url.includes("indazn.com") ? new Promise(resolve => setTimeout(() => resolve(happy(url)), 10)) : undefined);
-  assert.match(line(r.html, "DAZN"), /地区识别.*JP/);
+  const r = await run(url => url === "https://claude.ai/" ? new Promise(resolve => setTimeout(() => resolve(happy(url)), 10)) : undefined);
+  assert.match(line(r.html, "Claude"), /网页可访问.*JP/);
 });
 test("policy state failure keeps results and safely escapes the name", async () => {
   const r = await run(undefined, { policy: '<img src=x onerror="x">', state: async () => { throw new Error("failure"); } });
@@ -184,17 +178,17 @@ test("task gallery and sample configuration reference this fork's fixed checker"
 });
 
 
-test("upstream presentation: centered layout, original order, flags, separators and red node footer", async () => {
+test("compact presentation: six services in requested order, flags, separators and red node footer", async () => {
   const r = await run();
-  const labels = ["Dazn", "Discoveryᐩ", "Paramountᐩ", "Disneyᐩ", "ChatGPT", "Netflix", "YouTube Premium"];
+  const labels = ["ChatGPT", "Claude", "Gemini", "Netflix", "Disneyᐩ", "YouTube"];
   const positions = labels.map(name => r.html.indexOf("<b>" + name + ": </b>"));
   assert.ok(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])));
   assert.match(r.html, /text-align: center; font-family: -apple-system; font-size: large/);
   assert.match(r.html, /color="#CD5C5C"><b>节点<\/b> ➟ Example Proxy/);
   const visible = r.html.replace(/<[^>]*>/g, "");
-  assert.match(visible, /样本可用 ➟ ⟦🇯🇵⟧ 🎉/);
-  assert.match(visible, /地区支持 ➟ ⟦🇯🇵⟧ 🎉/);
-  assert.doesNotMatch(visible, /未验证|匿名检测|完整支持|检测策略/);
+  assert.match(visible, /Netflix: 支持 ➟ ⟦🇯🇵⟧ 🎉/);
+  assert.match(visible, /Disneyᐩ: 支持 ➟ ⟦🇯🇵⟧ 🎉/);
+  assert.doesNotMatch(visible, /未验证|匿名检测|完整支持|检测策略|样本可用|网页可访问|地区识别|地区支持|Dazn|Discovery|Paramount/);
   assert.equal((visible.match(/--------------------------------------/g) || []).length, 2);
 });
 test("Disney accepts a 201 Created device assertion and continues region verification", async () => {
@@ -222,4 +216,77 @@ test("rate limiting never receives a success icon", async () => {
   const row = r.html.split("<br><br>").find(value => value.includes("<b>ChatGPT: </b>"));
   assert.match(row, /❗️/);
   assert.doesNotMatch(row, /🎉/);
+});
+
+
+test("Claude unavailable-region redirect is unsupported", async () => {
+  const r = await run(url => url === "https://claude.ai/" ? {
+    ...response("Unavailable", 200),
+    headers: { "x-originating-url": "https://www.anthropic.com/app-unavailable-in-region" }
+  } : undefined);
+  assert.match(line(r.html, "Claude"), /地区受限/);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Claude: 未支持 🚫/);
+});
+test("Claude challenge is not misreported as an unsupported country", async () => {
+  const r = await run(url => url === "https://claude.ai/" ? response("<title>Just a moment</title>challenge-platform", 403) : undefined);
+  const visible = r.html.replace(/<[^>]*>/g, "");
+  assert.match(visible, /Claude: 需要验证 ❗️/);
+  assert.doesNotMatch(visible, /Claude: 未支持/);
+});
+test("Claude unexpected page cannot pass merely because HTTP is 200", async () => {
+  const r = await run(url => url === "https://claude.ai/" ? response("unknown page") : undefined);
+  assert.match(line(r.html, "Claude"), /页面未识别/);
+});
+test("Gemini current app bootstrap works without the removed numeric flag", async () => {
+  const r = await run(url => url === "https://gemini.google.com/" ? response('<title>Gemini</title>window.WIZ_global_data={};,2,1,200,"SGP"') : undefined);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Gemini: 支持 ➟ ⟦🇸🇬⟧ 🎉/);
+});
+for (const body of ["Gemini isn't available in your country", "Gemini is not available in your country", "Gemini is currently not supported in this region", "45631641,null,false"]) {
+  test("Gemini explicit region restriction: " + body, async () => {
+    const r = await run(url => url === "https://gemini.google.com/" ? response(body) : undefined);
+    assert.match(line(r.html, "Gemini"), /地区受限/);
+    assert.match(r.html.replace(/<[^>]*>/g, ""), /Gemini: 未支持 🚫/);
+  });
+}
+test("Gemini legacy true flag remains compatible", async () => {
+  const r = await run(url => url === "https://gemini.google.com/" ? response('45631641,null,true,2,1,200,"USA"') : undefined);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Gemini: 支持 ➟ ⟦🇺🇸⟧ 🎉/);
+});
+test("Gemini consent page is unknown, not a successful availability check", async () => {
+  const r = await run(url => url === "https://gemini.google.com/" ? {
+    ...response("<title>Before you continue to Gemini</title>WIZ_global_data"),
+    headers: { "X-Originating-URL": "https://consent.google.com/" }
+  } : undefined);
+  assert.match(line(r.html, "Gemini"), /需要网页验证/);
+});
+test("Gemini generic 200 page is unknown, not unsupported", async () => {
+  const r = await run(url => url === "https://gemini.google.com/" ? response("unknown page") : undefined);
+  assert.match(line(r.html, "Gemini"), /格式变化/);
+});
+test("unknown country code is not replaced with a made-up flag", async () => {
+  const r = await run(url => url === "https://gemini.google.com/" ? response('45631641,null,true,2,1,200,"ZZZ"') : undefined);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Gemini: 支持 🎉/);
+  assert.match(line(r.html, "Gemini"), /地区未知/);
+});
+test("native transport timeout is displayed as timeout", async () => {
+  const r = await run(url => url === "https://claude.ai/" ? Promise.reject({ error: "The request timed out. (-1001)" }) : undefined);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Claude: 检测超时 🚦/);
+});
+test("Netflix unavailable samples produce the requested compact unsupported label", async () => {
+  const r = await run(url => url.includes("netflix.com") ? response('{"isAvailable":false}') : undefined);
+  assert.match(r.html.replace(/<[^>]*>/g, ""), /Netflix: 未支持 🚫/);
+});
+
+
+test("Taiwan uses the requested China flag without changing the detected region", async () => {
+  const r = await run(url => {
+    if (url.endsWith("/graphql")) return response({ extensions: { session: { inSupportedLocation: true, location: { countryCode: "TW" } } } });
+    if (url === "https://gemini.google.com/") return response('45631641,null,true,2,1,200,"TWN"');
+  });
+  const visible = r.html.replace(/<[^>]*>/g, "");
+  assert.match(visible, /Disneyᐩ: 支持 ➟ ⟦🇨🇳⟧ 🎉/);
+  assert.match(visible, /Gemini: 支持 ➟ ⟦🇨🇳⟧ 🎉/);
+  assert.doesNotMatch(visible, /🇹🇼/);
+  assert.match(line(r.html, "Disney+"), /TW/);
+  assert.match(line(r.html, "Gemini"), /TW/);
 });

@@ -37,14 +37,11 @@ async function request(url, options = {}) {
     }));
   } catch (error) {
     if (error && error.message === "检测超时，无法判断") throw error;
+    const reason = String(error && (error.error || error.message) || "");
+    if (/timed?\s*out|timeout|超时|-1001/i.test(reason)) throw new Error("检测超时，无法判断");
     // Never expose raw transport errors, response bodies, tokens or endpoint IPs.
     throw new Error("网络或 TLS 异常，无法判断");
   }
-}
-
-function json(response) {
-  try { return JSON.parse(response.body); }
-  catch (_) { throw new Error("接口格式变化，无法判断"); }
 }
 
 function httpError(response) {
@@ -174,70 +171,82 @@ async function testYouTube() {
   return "Premium 页面可访问" + regionLabel(region[1]) + "（未验证订阅资格）";
 }
 
-async function testDazn() {
-  const response = await request("https://startup.core.indazn.com/misl/v5/Startup", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ LandingPageKey: "generic", Platform: "web", PlatformAttributes: {}, Manufacturer: "", PromoCode: "", Version: "2" })
-  });
-  requireOK(response);
-  const data = json(response);
-  const region = JSON.stringify(data).match(/"GeolocatedCountry":"([A-Z]{2})"/i);
-  if (!region) return "接口未返回地区，无法判断";
-  return "地区识别" + regionLabel(region[1]) + "（未验证播放权限）";
+function responseHeader(response, name) {
+  const headers = response.headers || {};
+  const key = Object.keys(headers).find(k => k.toLowerCase() === name.toLowerCase());
+  return key ? String(headers[key]) : "";
 }
 
-async function testParamount() {
-  const response = await request("https://www.paramountplus.com/", { opts: { redirection: false } });
-  requireOK(response);
-  if (!/paramount/i.test(response.body || "")) return "页面内容未识别，无法判断";
-  return "网页可访问（未验证播放权限）";
-}
-
-async function testDiscovery() {
-  const base = "https://us1-prod-direct.discoveryplus.com";
-  const response = await request(base + "/token?deviceId=d1a4a5d25212400d1e6985984604d740&realm=go&shortlived=true");
-  requireOK(response);
-  const data = json(response);
-  const token = data && data.data && data.data.attributes && data.data.attributes.token;
-  if (typeof token !== "string" || !token || /[;\r\n]/.test(token)) {
-    throw new Error("Discovery 授权接口异常，无法判断");
+async function testClaude() {
+  const [page, trace] = await Promise.all([
+    request("https://claude.ai/", { headers: { "Accept-Language": "en-US,en;q=0.9" } }),
+    request("https://claude.ai/cdn-cgi/trace").catch(() => null)
+  ]);
+  const finalURL = responseHeader(page, "X-Originating-URL") || page.url || "";
+  const body = page.body || "";
+  if (/app-unavailable-in-region/i.test(finalURL) ||
+      /Claude is not available in (?:your|this) (?:country|region)/i.test(body)) {
+    return "地区受限（服务明确返回）";
   }
-  const user = await request(base + "/users/me", { headers: { Cookie: "st=" + token } });
-  requireOK(user);
-  const info = json(user);
-  const region = info && info.data && info.data.attributes && info.data.attributes.currentLocationTerritory;
-  if (typeof region !== "string" || !/^[A-Z]{2}$/i.test(region)) return "接口未返回地区，无法判断";
-  return "地区识别" + regionLabel(region) + "（未验证播放权限）";
+  requireOK(page);
+  if (!/<title[^>]*>[^<]*Claude/i.test(body) && !/claude.*(?:log in|sign in)/i.test(body)) {
+    return "Claude 页面未识别，无法判断";
+  }
+  const match = trace && trace.statusCode === 200 && String(trace.body).match(/^loc=([A-Z]{2})\s*$/m);
+  return "网页可访问" + regionLabel(match ? match[1] : "") + "（未验证登录或对话）";
+}
+
+async function testGemini() {
+  const page = await request("https://gemini.google.com/", { headers: { "Accept-Language": "en-US,en;q=0.9" } });
+  const body = page.body || "";
+  const finalURL = responseHeader(page, "X-Originating-URL") || page.url || "";
+  if (/Gemini (?:is(?: currently)? not|isn['’]t(?: currently)?|is not currently) (?:available|supported) in (?:your|this) (?:country|region)|Gemini (?:is )?(?:currently )?unavailable in (?:your|this) (?:country|region)/i.test(body) ||
+      /45631641\s*,\s*null\s*,\s*false/.test(body)) {
+    return "地区受限（服务明确返回）";
+  }
+  requireOK(page);
+  if (/consent.google.com|accounts.google.com/.test(finalURL) ||
+      /Our systems have detected unusual traffic|<title>\s*Before you continue/i.test(body)) {
+    throw new Error("需要网页验证，无法判断");
+  }
+  // The older numeric availability flag can disappear. Recognize the actual
+  // application bootstrap as well; never treat a generic 200/login page as success.
+  const legacyAvailable = /45631641\s*,\s*null\s*,\s*true/.test(body);
+  const appPage = /<title[^>]*>[^<]*Gemini/i.test(body) && /WIZ_global_data/.test(body);
+  if (!legacyAvailable && !appPage) return "Gemini 页面格式变化，无法判断";
+  const country = body.match(/,\s*2\s*,\s*1\s*,\s*200\s*,\s*"([A-Z]{3})"/);
+  // Map common platform country codes; leave unknown codes unlabelled rather
+  // than guessing from a different domain that may use another unlock route.
+  const countries = {
+    USA: "US", CAN: "CA", GBR: "GB", IRL: "IE", AUS: "AU", NZL: "NZ",
+    JPN: "JP", SGP: "SG", HKG: "HK", TWN: "TW", KOR: "KR", CHN: "CN",
+    IND: "IN", IDN: "ID", MYS: "MY", THA: "TH", VNM: "VN", PHL: "PH",
+    DEU: "DE", FRA: "FR", NLD: "NL", ITA: "IT", ESP: "ES", PRT: "PT",
+    CHE: "CH", SWE: "SE", NOR: "NO", FIN: "FI", DNK: "DK", POL: "PL",
+    AUT: "AT", BEL: "BE", CZE: "CZ", ROU: "RO", TUR: "TR", BRA: "BR",
+    MEX: "MX", ARG: "AR", CHL: "CL", ZAF: "ZA", ARE: "AE", ISR: "IL"
+  };
+  return "网页可访问" + regionLabel(country ? countries[country[1]] : "") + "（未验证登录或对话）";
 }
 
 // Keep the upstream compact UI; full evidence remains in the row title.
 function displayResult(value) {
-  let text = value
-    .replace(/（未验证[^）]*）/g, "")
-    .replace("非自制片样本可用 2/2", "样本可用")
-    .replace("非自制片样本可用 1/2", "样本可用 1/2")
-    .replace("地区检测通过", "地区支持")
-    .replace("Premium 页面可访问", "网页可访问")
-    .replace("；可能为片库差异或访问限制，不能据此认定仅自制", "")
-    .replace("（服务明确返回）", "")
-    .replace("访问被拒绝或需要验证", "需要验证/访问受限")
-    .replace("，请稍后重试", "")
-    .replace("，无法判断", "")
-    .replace(/ · ([A-Z]{2})\b/g, (_, country) => {
-      const flag = [...country].map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join("");
-      return " ➟ ⟦" + flag + "⟧";
-    });
-  const icon = /超时/.test(value) ? "🚦"
-    : /地区受限|地区不支持/.test(value) ? "🚫"
-    : /两个样本均不可用/.test(value) ? "⚠️"
-    : /异常|无法判断/.test(value) ? "❗️"
-    : /样本可用|地区检测通过|网页可访问|地区识别/.test(value) ? "🎉" : "❗️";
-  return text + " " + icon;
+  if (/地区受限|地区不支持|两个样本均不可用/.test(value)) return "未支持 🚫";
+  const positive = /样本可用|地区检测通过|网页可访问/.test(value);
+  if (positive) {
+    const country = value.match(/ · ([A-Z]{2})\b/);
+    const flagCode = country ? (country[1] === "TW" ? "CN" : country[1]) : "";
+    const flag = [...flagCode].map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join("");
+    return "支持" + (flag ? " ➟ ⟦" + flag + "⟧" : "") + " 🎉";
+  }
+  if (/超时/.test(value)) return "检测超时 🚦";
+  if (/网页验证|需要验证/.test(value)) return "需要验证 ❗️";
+  return "检测异常 ❗️";
 }
 
 function render(rows, selected) {
-  const order = ["DAZN", "Discovery+", "Paramount+", "Disney+", "ChatGPT", "Netflix", "YouTube Premium"];
-  const names = { DAZN: "Dazn", "Discovery+": "Discoveryᐩ", "Paramount+": "Paramountᐩ", "Disney+": "Disneyᐩ" };
+  const order = ["ChatGPT", "Claude", "Gemini", "Netflix", "Disney+", "YouTube Premium"];
+  const names = { "Disney+": "Disneyᐩ", "YouTube Premium": "YouTube" };
   const content = [...rows].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
     .map(([name, value]) => "<b>" + escapeHTML(names[name] || name) + ": </b>" +
       '<span title="' + escapeHTML(value) + '">' + escapeHTML(displayResult(value)) + "</span>")
@@ -250,9 +259,8 @@ function render(rows, selected) {
 
 async function main() {
   const checks = [
-    ["Netflix", testNetflix], ["Disney+", testDisney], ["ChatGPT", testChatGPT],
-    ["YouTube Premium", testYouTube], ["DAZN", testDazn],
-    ["Paramount+", testParamount], ["Discovery+", testDiscovery]
+    ["ChatGPT", testChatGPT], ["Claude", testClaude], ["Gemini", testGemini],
+    ["Netflix", testNetflix], ["Disney+", testDisney], ["YouTube Premium", testYouTube]
   ];
   let rows = checks.map(([name]) => [name, "检测未完成，无法判断"]);
   let selected = typeof policy === "string" ? policy : "";
