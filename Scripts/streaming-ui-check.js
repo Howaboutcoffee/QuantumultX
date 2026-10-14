@@ -56,8 +56,8 @@ function httpError(response) {
   return "接口异常（HTTP " + code + "），无法判断";
 }
 
-function requireOK(response) {
-  if (response.statusCode !== 200) throw new Error(httpError(response));
+function requireOK(response, accepted = [200]) {
+  if (!accepted.includes(response.statusCode)) throw new Error(httpError(response));
   if (/cf-chl-|challenge-platform|<title>\s*Just a moment/i.test(response.body || "")) {
     throw new Error("需要网页验证，无法判断");
   }
@@ -100,13 +100,13 @@ async function testNetflix() {
   return "两个样本均不可用" + suffix + "；可能为片库差异或访问限制，不能据此认定仅自制";
 }
 
-function checkDisneyResponse(response) {
+function checkDisneyResponse(response, accepted = [200]) {
   let data;
   try { data = JSON.parse(response.body); } catch (_) { /* requireOK diagnoses HTTP errors first */ }
   if (data && /"forbidden-location"|"unsupported-location"/i.test(JSON.stringify(data))) {
     throw new Error("地区受限（服务明确返回）");
   }
-  requireOK(response);
+  requireOK(response, accepted);
   if (!data || typeof data !== "object") throw new Error("Disney 接口格式变化，无法判断");
   return data;
 }
@@ -117,7 +117,7 @@ async function testDisney() {
   const device = checkDisneyResponse(await request(base + "/devices", {
     method: "POST", headers: auth,
     body: JSON.stringify({ deviceFamily: "browser", applicationRuntime: "chrome", deviceProfile: "windows", attributes: {} })
-  }));
+  }), [200, 201]);
   if (typeof device.assertion !== "string" || !device.assertion) {
     throw new Error("Disney 设备接口异常，无法判断");
   }
@@ -210,6 +210,44 @@ async function testDiscovery() {
   return "地区识别" + regionLabel(region) + "（未验证播放权限）";
 }
 
+// Keep the upstream compact UI; full evidence remains in the row title.
+function displayResult(value) {
+  let text = value
+    .replace(/（未验证[^）]*）/g, "")
+    .replace("非自制片样本可用 2/2", "样本可用")
+    .replace("非自制片样本可用 1/2", "样本可用 1/2")
+    .replace("地区检测通过", "地区支持")
+    .replace("Premium 页面可访问", "网页可访问")
+    .replace("；可能为片库差异或访问限制，不能据此认定仅自制", "")
+    .replace("（服务明确返回）", "")
+    .replace("访问被拒绝或需要验证", "需要验证/访问受限")
+    .replace("，请稍后重试", "")
+    .replace("，无法判断", "")
+    .replace(/ · ([A-Z]{2})\b/g, (_, country) => {
+      const flag = [...country].map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join("");
+      return " ➟ ⟦" + flag + "⟧";
+    });
+  const icon = /超时/.test(value) ? "🚦"
+    : /地区受限|地区不支持/.test(value) ? "🚫"
+    : /两个样本均不可用/.test(value) ? "⚠️"
+    : /异常|无法判断/.test(value) ? "❗️"
+    : /样本可用|地区检测通过|网页可访问|地区识别/.test(value) ? "🎉" : "❗️";
+  return text + " " + icon;
+}
+
+function render(rows, selected) {
+  const order = ["DAZN", "Discovery+", "Paramount+", "Disney+", "ChatGPT", "Netflix", "YouTube Premium"];
+  const names = { DAZN: "Dazn", "Discovery+": "Discoveryᐩ", "Paramount+": "Paramountᐩ", "Disney+": "Disneyᐩ" };
+  const content = [...rows].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([name, value]) => "<b>" + escapeHTML(names[name] || name) + ": </b>" +
+      '<span title="' + escapeHTML(value) + '">' + escapeHTML(displayResult(value)) + "</span>")
+    .join("<br><br>");
+  const divider = "--------------------------------------";
+  return '<p style="text-align: center; font-family: -apple-system; font-size: large; font-weight: thin">' +
+    divider + "<br>" + content + "<br>" + divider + "<br>" +
+    '<font color="#CD5C5C"><b>节点</b> ➟ ' + escapeHTML(selected || "未指定") + "</font></p>";
+}
+
 async function main() {
   const checks = [
     ["Netflix", testNetflix], ["Disney+", testDisney], ["ChatGPT", testChatGPT],
@@ -223,12 +261,9 @@ async function main() {
     if (finished) return;
     finished = true;
     clearTimeout(deadline);
-    const html = rows.map(([name, value]) => "<b>" + escapeHTML(name) + "：</b>" + escapeHTML(value)).join("<br><br>");
     $done({
-      title: "📺 流媒体服务查询",
-      htmlMessage: '<div style="font-family:-apple-system;line-height:1.6">' + html +
-        "<hr>检测策略：" + escapeHTML(selected || "未指定") +
-        "<br><small>匿名检测仅作参考；实际播放、登录及账号权限请在对应应用确认。</small></div>"
+      title: "    📺  流媒体服务查询",
+      htmlMessage: render(rows, selected)
     });
   }
   const deadline = setTimeout(finish, 25000);
@@ -246,8 +281,8 @@ async function main() {
       try {
         const state = await bounded($configuration.sendMessage({ action: "get_policy_state", content: selected }), 1500);
         const chain = state && state.ret && state.ret[selected];
-        if (Array.isArray(chain)) selected += " → " + chain.join(" → ");
-        else if (typeof chain === "string") selected += " → " + chain;
+        if (Array.isArray(chain) && chain.length) selected = chain.join(" ➟ ");
+        else if (typeof chain === "string" && chain) selected = chain;
       } catch (_) { /* Keep the requested policy name. */ }
     }
   } finally { finish(); }

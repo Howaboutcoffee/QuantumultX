@@ -43,7 +43,10 @@ async function run(override = () => undefined, options = {}) {
   return { output, html: output.htmlMessage, calls, outputs, logs };
 }
 function line(html, name) {
-  return html.split("<br><br>").find(part => part.includes("<b>" + name + "：")) || "";
+  const names = { DAZN: "Dazn", "Disney+": "Disneyᐩ", "Discovery+": "Discoveryᐩ", "Paramount+": "Paramountᐩ" };
+  const row = html.split("<br><br>").find(part => part.includes("<b>" + (names[name] || name) + ": </b>")) || "";
+  const detail = row.match(/<span title="([^"]*)">/);
+  return detail ? detail[1] : row;
 }
 
 test("normal responses: evidence-specific labels, selected policy, verified TLS, no sensitive logging", async () => {
@@ -178,4 +181,45 @@ test("task gallery and sample configuration reference this fork's fixed checker"
   const url = "https://raw.githubusercontent.com/Howaboutcoffee/QuantumultX/master/Scripts/streaming-ui-check.js";
   assert.ok(gallery.task.find(t => t.startsWith("event-interaction " + url)));
   assert.ok(fs.readFileSync(path.join(root, "QuantumultX_Profiles.conf"), "utf8").includes(url));
+});
+
+
+test("upstream presentation: centered layout, original order, flags, separators and red node footer", async () => {
+  const r = await run();
+  const labels = ["Dazn", "Discoveryᐩ", "Paramountᐩ", "Disneyᐩ", "ChatGPT", "Netflix", "YouTube Premium"];
+  const positions = labels.map(name => r.html.indexOf("<b>" + name + ": </b>"));
+  assert.ok(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])));
+  assert.match(r.html, /text-align: center; font-family: -apple-system; font-size: large/);
+  assert.match(r.html, /color="#CD5C5C"><b>节点<\/b> ➟ Example Proxy/);
+  const visible = r.html.replace(/<[^>]*>/g, "");
+  assert.match(visible, /样本可用 ➟ ⟦🇯🇵⟧ 🎉/);
+  assert.match(visible, /地区支持 ➟ ⟦🇯🇵⟧ 🎉/);
+  assert.doesNotMatch(visible, /未验证|匿名检测|完整支持|检测策略/);
+  assert.equal((visible.match(/--------------------------------------/g) || []).length, 2);
+});
+test("Disney accepts a 201 Created device assertion and continues region verification", async () => {
+  const r = await run(url => url.endsWith("/devices") ? response({ assertion: "anonymous-created-device" }, 201) : undefined);
+  assert.match(line(r.html, "Disney+"), /地区检测通过.*JP/);
+  assert.ok(r.calls.some(c => c.url.endsWith("/graphql")));
+});
+test("Disney 201 without a device assertion is still unknown", async () => {
+  const r = await run(url => url.endsWith("/devices") ? response({}, 201) : undefined);
+  assert.match(line(r.html, "Disney+"), /设备接口异常/);
+});
+test("non-device 201 responses are not silently accepted", async () => {
+  const r = await run(url => url.endsWith("/token") ? response({ refresh_token: "anonymous-test-refresh" }, 201) : undefined);
+  assert.match(line(r.html, "Disney+"), /HTTP 201/);
+});
+test("node footer uses the resolved chain without duplicating the policy name", async () => {
+  const r = await run(undefined, { state: async () => ({ ret: { "Example Proxy": ["Example Proxy", "Example Node"] } }) });
+  assert.match(r.html, /节点<\/b> ➟ Example Proxy ➟ Example Node/);
+  assert.doesNotMatch(r.html, /Example Proxy ➟ Example Proxy/);
+});
+
+
+test("rate limiting never receives a success icon", async () => {
+  const r = await run(url => url === "https://chatgpt.com/" ? response("", 429) : undefined);
+  const row = r.html.split("<br><br>").find(value => value.includes("<b>ChatGPT: </b>"));
+  assert.match(row, /❗️/);
+  assert.doesNotMatch(row, /🎉/);
 });
