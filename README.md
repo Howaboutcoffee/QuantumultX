@@ -18,7 +18,7 @@ event-interaction https://raw.githubusercontent.com/Howaboutcoffee/QuantumultX/m
 
 保留上游的居中排版、国旗/状态图标、虚线分隔和红色节点名称。只检测以下五项，顺序固定：
 
-**ChatGPT → Gemini → Netflix → Disney+ → YouTube**
+**ChatGPT → Gemini → Netflix → Disney Plus+ → Youtube Premium**
 
 界面统一显示「支持 ➟ 国旗 🎉」或「未支持 🚫」。只有请求超时、网页验证或没有足够信息时显示对应异常状态，不把网络故障当成地区限制。没有可靠地区信息时不猜国旗。TW 地区按本 fork 的显示约定使用 🇨🇳，内部地区识别仍保留 TW。详细判定保留在 HTML 行标题中。
 

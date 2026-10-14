@@ -40,7 +40,7 @@ async function run(override = () => undefined, options = {}) {
   return { output, html: output.htmlMessage, calls, outputs, logs };
 }
 function line(html, name) {
-  const names = { "Disney+": "Disneyᐩ", "YouTube Premium": "YouTube" };
+  const names = { "Disney+": "Disney Plus+", "YouTube Premium": "Youtube Premium" };
   const row = html.split("<br><br>").find(part => part.includes("<b>" + (names[name] || name) + ": </b>")) || "";
   const detail = row.match(/<span title="([^"]*)">/);
   return detail ? detail[1] : row;
@@ -178,7 +178,7 @@ test("task gallery and sample configuration reference this fork's fixed checker"
 
 test("compact presentation: five services in requested order, flags, separators and red node footer", async () => {
   const r = await run();
-  const labels = ["ChatGPT", "Gemini", "Netflix", "Disneyᐩ", "YouTube"];
+  const labels = ["ChatGPT", "Gemini", "Netflix", "Disney Plus+", "Youtube Premium"];
   const positions = labels.map(name => r.html.indexOf("<b>" + name + ": </b>"));
   assert.ok(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])));
   assert.match(r.html, /text-align: center; font-family: -apple-system; font-size: large/);
@@ -265,7 +265,7 @@ test("Taiwan uses the requested China flag without changing the detected region"
     if (url === "https://gemini.google.com/") return response('45631641,null,true,2,1,200,"TWN"');
   });
   const visible = r.html.replace(/<[^>]*>/g, "");
-  assert.match(visible, /Disneyᐩ: 支持 ➟ ⟦🇨🇳⟧ 🎉/);
+  assert.match(visible, /Disney Plus\+: 支持 ➟ ⟦🇨🇳⟧ 🎉/);
   assert.match(visible, /Gemini: 支持 ➟ ⟦🇨🇳⟧ 🎉/);
   assert.doesNotMatch(visible, /🇹🇼/);
   assert.match(line(r.html, "Disney+"), /TW/);
@@ -282,6 +282,6 @@ for (const [body, code, expected] of [
   test("YouTube renders " + code + " " + expected, async () => {
     const r = await run(url => url.includes("youtube.com") ? response(body, code) : undefined);
     const visible = r.html.replace(/<[^>]*>/g, "");
-    assert.ok(visible.includes("YouTube: " + expected), visible);
+    assert.ok(visible.includes("Youtube Premium: " + expected), visible);
   });
 }

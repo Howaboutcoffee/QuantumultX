@@ -227,7 +227,7 @@ function displayResult(value) {
 
 function render(rows, selected) {
   const order = ["ChatGPT", "Gemini", "Netflix", "Disney+", "YouTube Premium"];
-  const names = { "Disney+": "Disneyᐩ", "YouTube Premium": "YouTube" };
+  const names = { "Disney+": "Disney Plus+", "YouTube Premium": "Youtube Premium" };
   const content = [...rows].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
     .map(([name, value]) => "<b>" + escapeHTML(names[name] || name) + ": </b>" +
       '<span title="' + escapeHTML(value) + '">' + escapeHTML(displayResult(value)) + "</span>")
