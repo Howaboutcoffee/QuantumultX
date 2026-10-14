@@ -168,7 +168,7 @@ async function testYouTube() {
   if (body.includes("Premium is not available in your country")) return "Premium 地区不支持";
   const region = body.match(/"GL"\s*:\s*"([A-Z]{2})"/i);
   if (!region || !/youtube/i.test(body)) return "页面内容未识别，无法判断";
-  return "Premium 页面可访问" + regionLabel(region[1]) + "（未验证订阅资格）";
+  return "Premium 网页可访问" + regionLabel(region[1]) + "（未验证订阅资格）";
 }
 
 function responseHeader(response, name) {

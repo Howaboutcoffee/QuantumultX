@@ -186,8 +186,9 @@ test("compact presentation: six services in requested order, flags, separators a
   assert.match(r.html, /text-align: center; font-family: -apple-system; font-size: large/);
   assert.match(r.html, /color="#CD5C5C"><b>节点<\/b> ➟ Example Proxy/);
   const visible = r.html.replace(/<[^>]*>/g, "");
-  assert.match(visible, /Netflix: 支持 ➟ ⟦🇯🇵⟧ 🎉/);
-  assert.match(visible, /Disneyᐩ: 支持 ➟ ⟦🇯🇵⟧ 🎉/);
+  for (const label of labels) {
+    assert.ok(visible.includes(label + ": 支持 ➟ ⟦🇯🇵⟧ 🎉"), label + " must render a successful check as supported");
+  }
   assert.doesNotMatch(visible, /未验证|匿名检测|完整支持|检测策略|样本可用|网页可访问|地区识别|地区支持|Dazn|Discovery|Paramount/);
   assert.equal((visible.match(/--------------------------------------/g) || []).length, 2);
 });
@@ -290,3 +291,17 @@ test("Taiwan uses the requested China flag without changing the detected region"
   assert.match(line(r.html, "Disney+"), /TW/);
   assert.match(line(r.html, "Gemini"), /TW/);
 });
+
+for (const [body, code, expected] of [
+  ['YouTube Premium {"GL":"TW"}', 200, "支持 ➟ ⟦🇨🇳⟧ 🎉"],
+  ["Premium is not available in your country", 200, "未支持 🚫"],
+  ["<title>Just a moment</title>", 200, "需要验证 ❗️"],
+  ["retry later", 429, "检测异常 ❗️"],
+  ["<html>login</html>", 200, "检测异常 ❗️"]
+]) {
+  test("YouTube renders " + code + " " + expected, async () => {
+    const r = await run(url => url.includes("youtube.com") ? response(body, code) : undefined);
+    const visible = r.html.replace(/<[^>]*>/g, "");
+    assert.ok(visible.includes("YouTube: " + expected), visible);
+  });
+}
